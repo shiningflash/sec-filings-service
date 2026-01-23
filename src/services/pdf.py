@@ -68,6 +68,4 @@ def html_to_pdf(html_path: Path, pdf_path: Path) -> None:
         logger.info("PDF saved: %s (%.1f KB)", pdf_path.name, len(pdf_bytes) / 1024)
 
     except Exception as e:
-        raise PdfConversionError(
-            f"Failed to convert {html_path.name} to PDF: {e}"
-        ) from e
+        raise PdfConversionError(f"Failed to convert {html_path.name} to PDF: {e}") from e

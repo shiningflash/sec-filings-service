@@ -117,9 +117,7 @@ def _parse_latest_10k(submissions: dict[str, Any], ticker: str) -> FilingMeta:
         raise No10KFoundError(f"No 10-K filing found for {ticker}")
 
     # Find the latest 10-K by filing date (ISO format sorts lexicographically)
-    latest_idx = max(
-        ten_k_indices, key=lambda i: filing_dates[i] if i < len(filing_dates) else ""
-    )
+    latest_idx = max(ten_k_indices, key=lambda i: filing_dates[i] if i < len(filing_dates) else "")
 
     # Extract filing metadata (with defensive checks)
     accession = _safe_get(accession_numbers, latest_idx, "")

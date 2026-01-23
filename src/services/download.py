@@ -85,8 +85,7 @@ def download_filing_document(
 
     if not fallback_doc:
         raise DownloadError(
-            f"Could not find 10-K document for {ticker} "
-            f"(accession={meta.accession_number})"
+            f"Could not find 10-K document for {ticker} (accession={meta.accession_number})"
         )
 
     return _download_document(
@@ -142,9 +141,7 @@ def _download_document(
     out_path = out_html_dir / filename
 
     atomic_write_bytes(out_path, content)
-    logger.info(
-        "[%s] Saved document to %s (%.1f KB)", ticker, out_path, len(content) / 1024
-    )
+    logger.info("[%s] Saved document to %s (%.1f KB)", ticker, out_path, len(content) / 1024)
 
     return out_path
 
@@ -238,9 +235,7 @@ def _parse_index_for_10k_document(html: str, ticker: str) -> str | None:
         href_lower = href.lower()
         for pattern in patterns:
             if re.match(pattern, href_lower):
-                logger.debug(
-                    "[%s] Found 10-K document by filename pattern: %s", ticker, href
-                )
+                logger.debug("[%s] Found 10-K document by filename pattern: %s", ticker, href)
                 return href
 
     # Priority 3: Take the first/largest HTML document (often the main filing)
@@ -269,9 +264,7 @@ class _IndexPageParser(HTMLParser):
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         if tag == "a":
             href = dict(attrs).get("href", "")
-            if href and not href.startswith(
-                ("http://", "https://", "#", "javascript:")
-            ):
+            if href and not href.startswith(("http://", "https://", "#", "javascript:")):
                 self._current_href = href
                 self._current_text = []
                 self._in_link = True
