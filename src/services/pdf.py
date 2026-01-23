@@ -51,10 +51,11 @@ def html_to_pdf(html_path: Path, pdf_path: Path) -> None:
 
             page.goto(file_url, wait_until="load", timeout=60000)
 
-            # Generate PDF
+            # Generate PDF with slight scale-down to prevent blank page overflow
             pdf_bytes = page.pdf(
                 print_background=True,
-                prefer_css_page_size=True,
+                format="Letter",
+                scale=0.9,
             )
 
             browser.close()
