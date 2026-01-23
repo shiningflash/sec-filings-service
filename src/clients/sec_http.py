@@ -18,6 +18,7 @@ from tenacity import (
 )
 
 from src.core.logging import get_logger
+from src.core.settings import DEFAULT_MAX_PER_SECOND, DEFAULT_RETRIES, DEFAULT_TIMEOUT
 from src.core.utils import simple_rate_limiter
 
 logger = get_logger(__name__)
@@ -71,9 +72,9 @@ class SecHttpClient:
     def __init__(
         self,
         user_agent: str,
-        max_per_second: float = 2.0,
-        retries: int = 3,
-        timeout: tuple[float, float] = (5.0, 30.0),
+        max_per_second: float = DEFAULT_MAX_PER_SECOND,
+        retries: int = DEFAULT_RETRIES,
+        timeout: tuple[float, float] = DEFAULT_TIMEOUT,
     ) -> None:
         """Initialize the SEC HTTP client.
 

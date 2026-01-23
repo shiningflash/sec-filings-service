@@ -59,6 +59,12 @@ python -m src.main --max-per-second 2
 python -m src.main --retries 3
 ```
 
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SEC_USER_AGENT` | User-Agent header for SEC requests | `Amirul Islam (amirulislamalmamun@gmail.com)` |
+
 ## Output
 
 PDFs are saved to:
