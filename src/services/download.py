@@ -3,8 +3,10 @@
 Downloads 10-K filing documents from SEC EDGAR Archives.
 Implements fallback to index page parsing if primary document fails.
 Rewrites relative URLs to absolute SEC URLs for proper resource loading.
+Downloads embedded images for PDF conversion (SEC blocks headless browsers).
 """
 
+import base64
 import re
 from html.parser import HTMLParser
 from pathlib import Path
@@ -33,12 +35,15 @@ def download_filing_document(
     meta: FilingMeta,
     ticker: str,
     out_html_dir: Path,
-) -> tuple[Path, str]:
+) -> Path:
     """Download the filing document and save to output directory.
 
     Attempts to download the primary document first. If that fails or
     the primary document is missing, falls back to parsing the index
     page to find an alternative document.
+
+    Images are downloaded and embedded as base64 data URLs since SEC
+    blocks headless browsers from loading images directly.
 
     Args:
         client: SEC HTTP client for making requests.
@@ -48,14 +53,14 @@ def download_filing_document(
         out_html_dir: Directory to save the downloaded file.
 
     Returns:
-        Tuple of (path to saved document file, base URL for resolving relative paths).
+        Path to the saved document file.
 
     Raises:
         DownloadError: If download fails even after fallback attempt.
     """
     accession_nd = accession_no_dashes(meta.accession_number)
 
-    # Base URL for resolving relative image/resource paths
+    # Base URL for rewriting relative image URLs to absolute
     base_url = f"https://www.sec.gov/Archives/edgar/data/{cik_int}/{accession_nd}/"
 
     # Try primary document first
@@ -69,8 +74,9 @@ def download_filing_document(
                 ticker=ticker,
                 filing_date=meta.filing_date,
                 out_html_dir=out_html_dir,
+                base_url=base_url,
             )
-            return path, base_url
+            return path
         except Exception as e:
             logger.warning(
                 "[%s] Primary document download failed: %s. Trying fallback...",
@@ -93,7 +99,7 @@ def download_filing_document(
             f"Could not find 10-K document for {ticker} (accession={meta.accession_number})"
         )
 
-    path = _download_document(
+    return _download_document(
         client=client,
         cik_int=cik_int,
         accession_no_dashes=accession_nd,
@@ -101,8 +107,8 @@ def download_filing_document(
         ticker=ticker,
         filing_date=meta.filing_date,
         out_html_dir=out_html_dir,
+        base_url=base_url,
     )
-    return path, base_url
 
 
 def _download_document(
@@ -113,6 +119,7 @@ def _download_document(
     ticker: str,
     filing_date: str,
     out_html_dir: Path,
+    base_url: str,
 ) -> Path:
     """Download a specific document from SEC Archives.
 
@@ -124,6 +131,7 @@ def _download_document(
         ticker: Company ticker.
         filing_date: Filing date for filename.
         out_html_dir: Output directory.
+        base_url: Base URL for rewriting relative paths to absolute.
 
     Returns:
         Path to saved file.
@@ -145,6 +153,18 @@ def _download_document(
     # Build output filename: {ticker}_{filingDate}_{accession}{ext}
     filename = safe_filename(ticker, filing_date, accession_no_dashes, extension=ext)
     out_path = out_html_dir / filename
+
+    # For HTML files, rewrite relative URLs to absolute SEC URLs
+    if ext.lower() in (".htm", ".html"):
+        try:
+            html_text = content.decode("utf-8", errors="replace")
+            html_text = _rewrite_relative_urls(html_text, base_url)
+            # Embed images as base64 (SEC blocks headless browsers)
+            html_text = _embed_images_as_base64(html_text, client, ticker)
+            content = html_text.encode("utf-8")
+            logger.debug("[%s] Rewrote relative URLs with base: %s", ticker, base_url)
+        except Exception as e:
+            logger.warning("[%s] Failed to rewrite URLs, saving original: %s", ticker, e)
 
     atomic_write_bytes(out_path, content)
     logger.info("[%s] Saved document to %s (%.1f KB)", ticker, out_path, len(content) / 1024)
@@ -252,6 +272,111 @@ def _parse_index_for_10k_document(html: str, ticker: str) -> str | None:
         return href
 
     return None
+
+
+def _rewrite_relative_urls(html: str, base_url: str) -> str:
+    """Rewrite relative URLs in HTML to absolute SEC URLs.
+
+    Handles src and href attributes that have relative paths.
+    Preserves absolute URLs, data URLs, and anchors.
+
+    Args:
+        html: HTML content.
+        base_url: Base URL to prepend to relative paths.
+
+    Returns:
+        HTML with rewritten URLs.
+    """
+    # Ensure base_url ends with /
+    if not base_url.endswith("/"):
+        base_url = base_url + "/"
+
+    def replace_url(match: re.Match) -> str:
+        """Replace relative URL with absolute URL."""
+        attr = match.group(1)  # src or href
+        quote = match.group(2)  # ' or "
+        url = match.group(3)
+
+        # Skip if already absolute, data URL, anchor, or javascript
+        if url.startswith(("http://", "https://", "data:", "#", "javascript:", "//")) or not url:
+            return match.group(0)
+
+        # Build absolute URL
+        absolute_url = base_url + url
+        return f"{attr}={quote}{absolute_url}{quote}"
+
+    # Pattern to match src="..." or href="..." (both single and double quotes)
+    pattern = r'(src|href)=(["\'])([^"\'>]+)\2'
+    return re.sub(pattern, replace_url, html, flags=re.IGNORECASE)
+
+
+def _embed_images_as_base64(
+    html: str,
+    client: "SecHttpClient",
+    ticker: str,
+) -> str:
+    """Download images and embed them as base64 data URLs.
+
+    SEC blocks headless browsers from loading images, so we download
+    images using our HTTP client (with proper User-Agent) and embed
+    them directly in the HTML as base64 data URLs.
+
+    Args:
+        html: HTML content with absolute image URLs.
+        client: SEC HTTP client for downloading images.
+        ticker: Company ticker for logging.
+
+    Returns:
+        HTML with images embedded as base64 data URLs.
+    """
+
+    def replace_with_base64(match: re.Match) -> str:
+        """Download image and replace with base64 data URL."""
+        quote = match.group(1)
+        url = match.group(2)
+
+        # Skip if already a data URL
+        if url.startswith("data:"):
+            return match.group(0)
+
+        # Only process SEC image URLs
+        if not url.startswith("https://www.sec.gov/"):
+            return match.group(0)
+
+        try:
+            # Download image
+            image_data = client.get_bytes(url)
+
+            # Determine mime type from extension
+            ext = url.split(".")[-1].lower()
+            mime_types = {
+                "jpg": "image/jpeg",
+                "jpeg": "image/jpeg",
+                "png": "image/png",
+                "gif": "image/gif",
+                "svg": "image/svg+xml",
+            }
+            mime_type = mime_types.get(ext, "image/jpeg")
+
+            # Convert to base64
+            b64_data = base64.b64encode(image_data).decode("ascii")
+            data_url = f"data:{mime_type};base64,{b64_data}"
+
+            logger.debug(
+                "[%s] Embedded image: %s (%.1f KB)",
+                ticker,
+                url.split("/")[-1],
+                len(image_data) / 1024,
+            )
+            return f"src={quote}{data_url}{quote}"
+
+        except Exception as e:
+            logger.warning("[%s] Failed to embed image %s: %s", ticker, url, e)
+            return match.group(0)
+
+    # Pattern to match src="https://..." for images
+    pattern = r'src=(["\'])(https://www\.sec\.gov/[^"\']+\.(?:jpg|jpeg|png|gif|svg))\1'
+    return re.sub(pattern, replace_with_base64, html, flags=re.IGNORECASE)
 
 
 class _IndexPageParser(HTMLParser):

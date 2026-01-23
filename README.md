@@ -92,6 +92,10 @@ output/
 ### Install Development Dependencies
 
 ```bash
+# Install all dependencies (core + dev)
+uv pip install -r requirements-dev.txt
+
+# Or install only runtime dependencies
 uv pip install -r requirements.txt
 ```
 
@@ -151,10 +155,15 @@ src/
 ## Design Decisions
 
 - **Playwright for PDF conversion**: Chosen for robust HTML rendering of complex SEC filings
+- **Base64 image embedding**: SEC blocks headless browsers from loading images directly; we embed images as base64 data URLs during HTML download
 - **Sequential processing**: Respects SEC rate limits (default: 2 req/s)
 - **Tenacity for retries**: Handles transient failures with exponential backoff
 - **Fallback strategy**: If primary document fails, parses the filing index page to locate the main document
 - **Atomic writes**: Prevents partial/corrupt files on interruption
+
+## Documentation
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed architecture documentation.
 
 ## SEC Compliance
 

@@ -55,14 +55,12 @@ class DownloadResult:
     Attributes:
         success: Whether the download succeeded.
         html_path: Path to the downloaded HTML file (if successful).
-        base_url: Base URL for resolving relative image/resource paths.
         error: Error message (if failed).
         used_fallback: Whether the fallback index page method was used.
     """
 
     success: bool
     html_path: Optional[str] = None
-    base_url: Optional[str] = None
     error: Optional[str] = None
     used_fallback: bool = False
 

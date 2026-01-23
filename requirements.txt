@@ -1,8 +1,4 @@
-# Core dependencies
+# Core dependencies for SEC filings service
 requests>=2.31.0
 tenacity>=8.2.0
 playwright>=1.40.0
-
-# Development & Testing
-pytest>=7.4.0
-ruff>=0.1.0

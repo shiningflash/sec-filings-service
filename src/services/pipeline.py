@@ -73,21 +73,21 @@ def process_company(
             out_json_dir=output_dirs["json"],
         )
 
-        # Step 3: Download filing document
-        html_path, base_url = download_filing_document(
+        # Step 3: Download filing document (images embedded as base64)
+        html_path = download_filing_document(
             client=client,
             cik_int=cik_int,
             meta=meta,
             ticker=ticker,
             out_html_dir=output_dirs["html"],
         )
-        download_result = DownloadResult(success=True, html_path=str(html_path), base_url=base_url)
+        download_result = DownloadResult(success=True, html_path=str(html_path))
 
-        # Step 4: Convert to PDF (pass base_url for image URL resolution)
+        # Step 4: Convert to PDF
         pdf_filename = safe_filename(ticker, meta.filing_date, "10-K", extension=".pdf")
         pdf_path = output_dirs["pdf"] / pdf_filename
 
-        html_to_pdf(html_path, pdf_path, base_url=base_url)
+        html_to_pdf(html_path, pdf_path)
         conversion_result = ConversionResult(success=True, pdf_path=str(pdf_path))
 
         logger.info("[%s] Completed successfully", ticker)
