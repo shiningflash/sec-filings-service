@@ -2,6 +2,7 @@
 
 Downloads 10-K filing documents from SEC EDGAR Archives.
 Implements fallback to index page parsing if primary document fails.
+Rewrites relative URLs to absolute SEC URLs for proper resource loading.
 """
 
 import re
@@ -32,7 +33,7 @@ def download_filing_document(
     meta: FilingMeta,
     ticker: str,
     out_html_dir: Path,
-) -> Path:
+) -> tuple[Path, str]:
     """Download the filing document and save to output directory.
 
     Attempts to download the primary document first. If that fails or
@@ -47,17 +48,20 @@ def download_filing_document(
         out_html_dir: Directory to save the downloaded file.
 
     Returns:
-        Path to the saved document file.
+        Tuple of (path to saved document file, base URL for resolving relative paths).
 
     Raises:
         DownloadError: If download fails even after fallback attempt.
     """
     accession_nd = accession_no_dashes(meta.accession_number)
 
+    # Base URL for resolving relative image/resource paths
+    base_url = f"https://www.sec.gov/Archives/edgar/data/{cik_int}/{accession_nd}/"
+
     # Try primary document first
     if meta.primary_document:
         try:
-            return _download_document(
+            path = _download_document(
                 client=client,
                 cik_int=cik_int,
                 accession_no_dashes=accession_nd,
@@ -66,6 +70,7 @@ def download_filing_document(
                 filing_date=meta.filing_date,
                 out_html_dir=out_html_dir,
             )
+            return path, base_url
         except Exception as e:
             logger.warning(
                 "[%s] Primary document download failed: %s. Trying fallback...",
@@ -88,7 +93,7 @@ def download_filing_document(
             f"Could not find 10-K document for {ticker} (accession={meta.accession_number})"
         )
 
-    return _download_document(
+    path = _download_document(
         client=client,
         cik_int=cik_int,
         accession_no_dashes=accession_nd,
@@ -97,6 +102,7 @@ def download_filing_document(
         filing_date=meta.filing_date,
         out_html_dir=out_html_dir,
     )
+    return path, base_url
 
 
 def _download_document(

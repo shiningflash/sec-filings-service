@@ -74,20 +74,20 @@ def process_company(
         )
 
         # Step 3: Download filing document
-        html_path = download_filing_document(
+        html_path, base_url = download_filing_document(
             client=client,
             cik_int=cik_int,
             meta=meta,
             ticker=ticker,
             out_html_dir=output_dirs["html"],
         )
-        download_result = DownloadResult(success=True, html_path=str(html_path))
+        download_result = DownloadResult(success=True, html_path=str(html_path), base_url=base_url)
 
-        # Step 4: Convert to PDF
+        # Step 4: Convert to PDF (pass base_url for image URL resolution)
         pdf_filename = safe_filename(ticker, meta.filing_date, "10-K", extension=".pdf")
         pdf_path = output_dirs["pdf"] / pdf_filename
 
-        html_to_pdf(html_path, pdf_path)
+        html_to_pdf(html_path, pdf_path, base_url=base_url)
         conversion_result = ConversionResult(success=True, pdf_path=str(pdf_path))
 
         logger.info("[%s] Completed successfully", ticker)
