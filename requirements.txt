@@ -1,0 +1,4 @@
+# Core dependencies for SEC filings service
+requests>=2.31.0
+tenacity>=8.2.0
+playwright>=1.40.0
