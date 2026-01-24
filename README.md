@@ -1,16 +1,18 @@
 # SEC EDGAR 10-K Fetch + PDF Conversion
 
-A Python tool that fetches the latest SEC 10-K filings for specified companies via EDGAR APIs, downloads the primary filing documents, and converts them to PDF.
+A Python CLI tool that fetches the latest SEC EDGAR **10-K** filing for each company, downloads the primary filing document, and converts it to **PDF**.
 
 ## What it does
 
-- Resolves company tickers to CIK numbers using SEC's ticker mapping
-- Fetches the latest 10-K filing metadata from SEC EDGAR
-- Downloads the primary filing document (HTML/HTM)
-- Converts the filing to PDF using Playwright (Chromium)
-- Provides a summary of results for all processed companies
+1. Resolves company tickers to **CIK** using SEC’s ticker mapping.
+2. Fetches **submissions** metadata from `data.sec.gov`.
+3. Selects the **latest 10-K** filing for each company.
+4. Downloads the primary filing document (HTML/HTM/TXT).
+5. (Optional but enabled) Improves PDF fidelity by embedding external assets as data URLs when needed.
+6. Converts the document to PDF using **Playwright (Chromium)**
+7. Provides a summary of results for all processed companies
 
-## Target Companies (Default)
+## Default companies
 
 - Apple (AAPL)
 - Meta (META)
@@ -22,7 +24,8 @@ A Python tool that fetches the latest SEC 10-K filings for specified companies v
 ## Prerequisites
 
 - Python 3.12+
-- [uv](https://github.com/astral-sh/uv) (recommended) or pip
+- `uv` (recommended) or `pip`
+- Playwright Chromium (installed via `playwright install chromium`)
 
 ## Quick Start
 
@@ -48,6 +51,8 @@ python -m src.main
 ```
 
 ## Usage
+
+`--companies` accepts either **company names** or **tickers** (comma-separated).
 
 ```bash
 # Run with default companies (Apple, Meta, Alphabet, Amazon, Netflix, Goldman Sachs)
@@ -105,12 +110,6 @@ uv pip install -r requirements.txt
 # Check for linting issues
 ruff check .
 
-# Auto-fix linting issues
-ruff check --fix .
-
-# Check formatting
-ruff format --check .
-
 # Format code
 ruff format .
 ```
@@ -120,15 +119,6 @@ ruff format .
 ```bash
 # Run all tests
 pytest
-
-# Run tests with verbose output
-pytest -v
-
-# Run specific test file
-pytest tests/test_filings.py
-
-# Run tests quietly
-pytest -q
 ```
 
 ## Project Structure
@@ -169,11 +159,11 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for detailed architecture docum
 
 This tool follows [SEC EDGAR access policies](https://www.sec.gov/os/accessing-edgar-data):
 
-- ✅ Descriptive User-Agent header with contact email
-- ✅ Rate limiting (default: 2 requests/second)
-- ✅ Timeouts on all HTTP requests (5s connect, 30s read)
-- ✅ Retry with exponential backoff for 429/5xx errors
-- ✅ Respects Retry-After headers
+- Descriptive **User-Agent** header with contact email
+- Rate limiting (**configurable**, default: 2 requests/second)
+- Timeouts on all HTTP requests (5s connect, 30s read)
+- Retry with exponential backoff for 429/5xx errors
+- Respects Retry-After headers
 
 ## License
 
