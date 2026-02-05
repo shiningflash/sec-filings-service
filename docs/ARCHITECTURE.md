@@ -1,4 +1,4 @@
-# SEC Filings Service Architecture
+# SEC EDGAR 10-K FILINGS - Service Architecture
 
 ## Overview
 
@@ -84,40 +84,6 @@ This service fetches the latest SEC EDGAR **10-K** filing for each target compan
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
-## Module Structure
-
-### Entry Point (`src/`)
-
-| File | Description |
-|------|-------------|
-| `main.py` | Application entry point; calls CLI and runs pipeline |
-| `cli.py` | Argument parsing with argparse; returns config and client |
-
-### Core Layer (`src/core/`)
-
-| File | Description |
-|------|-------------|
-| `settings.py` | Configuration constants: URLs, default tickers, User-Agent, timeouts |
-| `models.py` | Dataclasses: `Company`, `FilingMeta`, `DownloadResult`, `ConversionResult`, `CompanyResult`, `Status` |
-| `utils.py` | Pure helpers: `ensure_output_dirs()`, `atomic_write_bytes()`, `safe_filename()`, `accession_no_dashes()`, `simple_rate_limiter()` |
-| `logging.py` | Logging setup: `setup_logging()`, `get_logger()` |
-
-### Client Layer (`src/clients/`)
-
-| File | Description |
-|------|-------------|
-| `sec_http.py` | `SecHttpClient` — single HTTP gateway with User-Agent, rate limiting, timeouts, and Tenacity retries |
-
-### Services Layer (`src/services/`)
-
-| File | Description |
-|------|-------------|
-| `cik.py` | Ticker → CIK resolution: `download_ticker_map()`, `resolve_ticker_to_cik()`, `get_ticker_for_company()` |
-| `filings.py` | Fetch and parse submissions JSON: `fetch_latest_10k_meta()` |
-| `download.py` | Download filing documents: `download_filing_document()`, fallback index parsing, URL rewriting, base64 image embedding |
-| `pdf.py` | HTML → PDF conversion: `html_to_pdf()` using Playwright Chromium |
-| `pipeline.py` | Orchestration: `run_pipeline()`, `process_company()`, `print_summary()` |
-
 ## Data Flow
 
 ```text
@@ -163,6 +129,8 @@ This service fetches the latest SEC EDGAR **10-K** filing for each target compan
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
+---
+
 ## Key Design Decisions
 
 ### 1. Image Embedding as Base64
@@ -197,22 +165,14 @@ Companies are processed sequentially (not in parallel) to:
 - Simplify error handling
 - Avoid overwhelming system resources
 
-## Error Handling
+### 5. Error Handling
 
 The pipeline isolates failures per company:
 - One company failing does **not** stop others
 - Final summary includes OK/FAILED status and error messages
+- All errors include context (ticker, CIK, URL) for debugging.
 
-Custom exceptions for different failure modes:
-
-| Exception | Description |
-|-----------|-------------|
-| `CikLookupError` | Failed to resolve ticker to CIK |
-| `FilingNotFoundError` | No 10-K filings found for company |
-| `DownloadError` | Document download failed |
-| `PdfConversionError` | PDF conversion failed |
-
-All errors include context (ticker, CIK, URL) for debugging.
+---
 
 ## Configuration
 
@@ -226,33 +186,4 @@ Key settings in `src/core/settings.py`:
 | `DEFAULT_RETRIES` | 3 | Retry attempts for failed requests |
 | `DEFAULT_TIMEOUT` | (5, 30) | Connect and read timeouts in seconds |
 
-## Testing
-
-Tests are organized by module (all mock HTTP — no real SEC calls):
-
-```text
-tests/
-├── test_cik.py              # CIK lookup and ticker resolution
-├── test_filings.py          # 10-K selection logic
-├── test_pdf.py              # URL rewriting tests
-├── test_urls.py             # URL construction + accession normalization
-└── test_fallback_parser.py  # Index page parsing for fallback
-```
-
-Run tests: `pytest -v`
-
-## Dependencies
-
-### Runtime
-| Package | Purpose |
-|---------|---------|
-| `requests` | HTTP client for SEC API |
-| `tenacity` | Retry logic with exponential backoff |
-| `playwright` | Headless Chromium for PDF rendering |
-
-### Development
-| Package | Purpose |
-|---------|---------|
-| `pytest` | Test framework |
-| `pytest-cov` | Coverage reporting |
-| `ruff` | Linting and formatting |
+END
