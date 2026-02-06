@@ -226,5 +226,3 @@ NICE TO PROVIDE:
 - The final console summary clearly shows success/failure per company.
 - The code is readable, modular, typed, and has basic error handling + retries.
 - README enables someone new to run it confidently.
-
-END

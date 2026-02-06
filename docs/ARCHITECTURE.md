@@ -1,4 +1,4 @@
-# SEC EDGAR 10-K FILINGS - Service Architecture
+# SEC EDGAR 10-K Filings — Service Architecture
 
 ## Overview
 
@@ -6,14 +6,12 @@ This service fetches the latest SEC EDGAR **10-K** filing for each target compan
 
 ## High-Level Flow
 
-1. **CIK lookup** — Ticker → CIK via SEC's ticker mapping
-2. **Submissions fetch** — `data.sec.gov/submissions/CIK##########.json`
-3. **Latest 10-K selection** — Choose newest `filingDate` where `form == "10-K"`
-4. **Download** — Fetch primary document from `www.sec.gov/Archives/...`
-5. **Fallback** — If primary doc fails, fetch `*-index.html` and locate the main document
-6. **Image embedding** — Download images and embed as base64 (SEC blocks headless browsers)
-7. **PDF conversion** — Playwright renders the local HTML to PDF
-8. **Summary** — Print per-company status + output paths
+```
+Input (tickers/names) → CIK Lookup → Submissions Fetch → Latest 10-K Selection
+    → Document Download (+ image embedding) → PDF Conversion → Summary Output
+```
+
+If the primary document download fails, a **fallback** fetches the filing index page to locate the correct document.
 
 ## Architecture Diagram
 
@@ -129,50 +127,39 @@ This service fetches the latest SEC EDGAR **10-K** filing for each target compan
 └──────────────────────────────────────────────────────────────────────────┘
 ```
 
----
+## Module Reference
 
-## Key Design Decisions
+### Entry Point
 
-### 1. Image Embedding as Base64
+| File | Responsibility |
+|------|----------------|
+| `main.py` | Application entry point; calls CLI and runs pipeline |
+| `cli.py` | Argument parsing with argparse; returns config and client |
 
-**Problem**: SEC servers block headless browsers from loading images directly, returning 403 Forbidden errors.
+### Core Layer (`src/core/`)
 
-**Solution**: During HTML download, we:
-1. Parse the HTML for all image sources
-2. Download images using our HTTP client (with proper User-Agent)
-3. Convert images to base64 data URLs
-4. Embed the base64 data directly in the HTML
+| File | Responsibility |
+|------|----------------|
+| `settings.py` | Configuration constants: URLs, default tickers, User-Agent, timeouts |
+| `models.py` | Dataclasses: `Company`, `FilingMeta`, `DownloadResult`, `ConversionResult`, `CompanyResult`, `Status` |
+| `utils.py` | Pure helpers: `ensure_output_dirs()`, `atomic_write_bytes()`, `safe_filename()`, `accession_no_dashes()`, `simple_rate_limiter()` |
+| `logging.py` | Logging setup: `setup_logging()`, `get_logger()` |
 
-This ensures images appear in the final PDF without requiring the browser to make additional requests.
+### Client Layer (`src/clients/`)
 
-### 2. Rate Limiting
+| File | Responsibility |
+|------|----------------|
+| `sec_http.py` | `SecHttpClient` — single HTTP gateway with User-Agent, rate limiting, timeouts, and Tenacity retries |
 
-SEC requires no more than 10 requests per second. We implement:
-- Configurable delay between requests (default: 0.5s = 2 req/s)
-- Exponential backoff with Tenacity for transient failures
+### Services Layer (`src/services/`)
 
-### 3. Fallback Document Detection
-
-If the primary document listed in filing metadata fails:
-1. Download the filing index page
-2. Parse for alternative documents (htm, html files)
-3. Select the best candidate (prioritizes documents with "10-K" in description)
-
-### 4. Sequential Processing
-
-Companies are processed sequentially (not in parallel) to:
-- Respect SEC rate limits
-- Simplify error handling
-- Avoid overwhelming system resources
-
-### 5. Error Handling
-
-The pipeline isolates failures per company:
-- One company failing does **not** stop others
-- Final summary includes OK/FAILED status and error messages
-- All errors include context (ticker, CIK, URL) for debugging.
-
----
+| File | Responsibility |
+|------|----------------|
+| `cik.py` | Ticker → CIK resolution with file-based caching |
+| `filings.py` | Fetch and parse submissions JSON to find latest 10-K |
+| `download.py` | Download filing document with fallback index parsing and base64 image embedding |
+| `pdf.py` | HTML → PDF conversion using Playwright Chromium |
+| `pipeline.py` | Orchestration: `run_pipeline()`, `process_company()`, `print_summary()` |
 
 ## Configuration
 
@@ -181,9 +168,21 @@ Key settings in `src/core/settings.py`:
 | Setting | Default | Description |
 |---------|---------|-------------|
 | `DEFAULT_COMPANY_TICKERS` | 6 companies | Apple, Meta, Alphabet, Amazon, Netflix, Goldman Sachs |
-| `USER_AGENT` | Email-based | Required by SEC fair access policy |
+| `USER_AGENT` | Email-based | Required by SEC; overridable via `SEC_USER_AGENT` env var |
 | `DEFAULT_MAX_PER_SECOND` | 2 req/s | Rate limit for SEC requests |
-| `DEFAULT_RETRIES` | 3 | Retry attempts for failed requests |
+| `DEFAULT_RETRIES` | 3 | Retry attempts for transient failures |
 | `DEFAULT_TIMEOUT` | (5, 30) | Connect and read timeouts in seconds |
 
-END
+## Key Design Decisions
+
+| Decision | Choice | Rationale |
+|----------|--------|-----------|
+| HTTP library | `requests` | Simple, well-known, sufficient for sequential use |
+| Retry/backoff | `tenacity` | Flexible decorators, respects `Retry-After` |
+| PDF conversion | Playwright Chromium | Most accurate rendering of complex SEC HTML/CSS |
+| Image strategy | Base64 embedding | SEC blocks headless browsers; self-contained HTML avoids 403s |
+| CLI parser | `argparse` | Built-in, no extra dependency |
+| Data models | `dataclasses` | Built-in, lightweight, sufficient for this scope |
+| Parallelism | Sequential | SEC rate limits cap benefit; simplicity wins |
+| PDF writes | Atomic (temp → rename) | Prevents corrupt partial files on crash |
+| Failure model | Per-company isolation | One failure does not stop the pipeline |

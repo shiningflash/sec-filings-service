@@ -1,181 +1,126 @@
-# SEC EDGAR 10-K FILINGS - Step-by-Step Flow Explanation
+# SEC EDGAR 10-K Filings — Step-by-Step Flow & Design Rationale
 
-> "This is a Python CLI tool that fetches the latest 10-K annual filings from the SEC EDGAR database for specified companies and converts them to PDF format. It handles the entire pipeline: resolving company tickers to SEC CIK identifiers, fetching filing metadata, downloading the primary document, embedding images for offline rendering, and converting to PDF using Playwright's Chromium browser."
+> A Python CLI tool that fetches the latest 10-K annual filings from the SEC EDGAR database for specified companies and converts them to PDF format.
 
-#### Step 1: Input Parsing (`cli.py`)
+For the architecture diagram and module reference, see [ARCHITECTURE.md](ARCHITECTURE.md).
+
+---
+
+## Pipeline Walkthrough
+
+### Step 1: Input Parsing (`cli.py`)
 
 ```
-User Input: "Apple,Meta,AAPL,TSLA"
+User runs: python -m src.main --companies "Apple,Meta,AAPL,TSLA"
      ↓
 argparse parses --companies flag
      ↓
-Output: List of strings ["Apple", "Meta", "AAPL", "TSLA"]
+Output: ["Apple", "Meta", "AAPL", "TSLA"]
 ```
 
-**What happens:**
-- The CLI accepts company names OR tickers (flexible input)
-- Configures logging level, output directory, rate limiting parameters
-- Creates the `SecHttpClient` with User-Agent and retry settings
-
-**Why this design:**
-- Single entry point keeps the interface simple
-- Configuration is centralized before any processing begins
-- The HTTP client is created once and reused (connection pooling)
+- Accepts company names OR tickers (flexible input).
+- Configures logging, output directory, rate limiting, and retry count.
+- Creates a single `SecHttpClient` instance (reused for all requests via connection pooling).
 
 ---
 
-#### Step 2: Company Name → Ticker Resolution (`cik.py`)
+### Step 2: Company Name → Ticker Resolution (`cik.py`)
 
 ```
-"Apple" → "AAPL"
+"Apple" → "AAPL"       (via DEFAULT_COMPANY_TICKERS mapping)
 "Goldman Sachs" → "GS"
-"AAPL" → "AAPL" (already a ticker, passthrough)
+"AAPL" → "AAPL"        (already a ticker — passthrough)
 ```
 
-**What happens:**
-- A hardcoded mapping (`DEFAULT_COMPANY_TICKERS` in `settings.py`) maps known company names to tickers
-- If the input is already a valid ticker (e.g., "AAPL"), it passes through unchanged
-- Unknown names are treated as tickers (allows flexibility)
-
-**Why this design:**
-- Assignment specified 6 default companies—a simple dict is sufficient
-- No need for fuzzy matching or external API for company name resolution
-- Keeps the code minimal and predictable
-
-**Alternative considered:**
-- Could use a fuzzy matching library (e.g., `fuzzywuzzy`) for company names
-- Could call an external API for company lookup
-- **Rejected because:** Over-engineering for the requirement; adds complexity and potential failure points
+A hardcoded dict maps the 6 assignment companies to tickers. Unknown inputs are treated as tickers directly, which keeps the code minimal and avoids over-engineering (e.g., fuzzy matching, external API).
 
 ---
 
-#### Step 3: Ticker → CIK Resolution (`cik.py`)
+### Step 3: Ticker → CIK Resolution (`cik.py`)
 
 ```
-"AAPL" → (cik_int=320193, cik10="0000320193")
+"AAPL" → cik_int=320193, cik10="0000320193"
 ```
 
-**What happens:**
-1. Download SEC's `company_tickers.json` (cached to avoid repeated downloads)
-2. Parse JSON to build ticker→CIK mapping
-3. Return two CIK formats:
-   - `cik_int`: Integer (e.g., `320193`) - used in Archives URL path
-   - `cik10`: Zero-padded 10-digit string (e.g., `"0000320193"`) - required for submissions endpoint
-
-**Why two CIK formats:**
-- SEC submissions endpoint requires: `CIK0000320193.json` (10-digit padded)
-- SEC Archives path uses: `/edgar/data/320193/` (no padding)
-- This is a real SEC API quirk that must be handled correctly
-
-**Caching strategy:**
-- In-memory cache during the run (ticker_map dict)
-- File-based cache (`.cache/company_tickers.json`) to avoid re-downloading
-- Cache expiry: Currently no TTL, could add 24-hour expiry
+1. Downloads SEC's `company_tickers.json` (cached to `.cache/` to avoid re-downloading).
+2. Builds a ticker→CIK lookup dict.
+3. Returns **two CIK formats** — required because SEC uses different formats in different endpoints:
+   - `cik10` (zero-padded): `CIK0000320193.json` — submissions endpoint
+   - `cik_int` (integer): `/edgar/data/320193/` — archives path
 
 ---
 
-#### Step 4: Fetch Submissions & Find Latest 10-K (`filings.py`)
+### Step 4: Fetch Submissions & Find Latest 10-K (`filings.py`)
 
 ```
 GET https://data.sec.gov/submissions/CIK0000320193.json
      ↓
-Parse JSON → Find form=="10-K" with latest filingDate
+Parse columnar JSON arrays → find first form=="10-K"
      ↓
 Extract: accessionNumber, primaryDocument, filingDate
 ```
 
-**What happens:**
-1. Fetch the submissions JSON for the company
-2. The JSON has a columnar structure: `filings.recent.form[]`, `filings.recent.accessionNumber[]`, etc.
-3. Find the index where `form[i] == "10-K"` with the newest `filingDate[i]`
-4. Extract metadata at that index
+**Critical detail — columnar array alignment:**
 
-**Critical implementation detail - Columnar Array Alignment:**
 ```python
-# The arrays are aligned by index!
-forms = data["filings"]["recent"]["form"]           # ["10-K", "8-K", "10-Q", ...]
-accessions = data["filings"]["recent"]["accessionNumber"]  # ["0000320193-24-000081", ...]
-dates = data["filings"]["recent"]["filingDate"]     # ["2024-11-01", "2024-10-15", ...]
+forms      = data["filings"]["recent"]["form"]              # ["10-K", "8-K", ...]
+accessions = data["filings"]["recent"]["accessionNumber"]   # ["0000320193-24-...", ...]
+dates      = data["filings"]["recent"]["filingDate"]        # ["2024-11-01", ...]
 
-# To find the latest 10-K:
+# All arrays share the same index — form[i], accessions[i], dates[i] are the same filing
 for i, form in enumerate(forms):
     if form == "10-K":
-        # forms[i], accessions[i], dates[i] all refer to the SAME filing
+        # found it at index i
 ```
 
-**Why save submissions JSON (`output/json/`):**
-- Debugging: Can inspect what SEC returned without re-fetching
-- Traceability: Verify which filing was selected
-- Offline analysis: Examine filing history
+Submissions JSON is also saved to `output/json/` for debugging and traceability.
 
 ---
 
-#### Step 5: Download Primary Document (`download.py`)
+### Step 5: Download Primary Document (`download.py`)
 
 ```
-Build URL: https://www.sec.gov/Archives/edgar/data/320193/000032019324000081/aapl-20240928.htm
+Accession: "0000320193-24-000081" → no dashes: "000032019324000081"
      ↓
-Download HTML content
+GET https://www.sec.gov/Archives/edgar/data/320193/000032019324000081/aapl-20240928.htm
      ↓
-Parse HTML, find <img> tags
+Parse HTML → find <img> tags → download each image → embed as base64
      ↓
-Download each image, convert to base64, embed inline
-     ↓
-Save modified HTML to output/html/
+Save self-contained HTML to output/html/
 ```
 
-**Accession Number Transformation:**
-```
-Original:    "0000320193-24-000081"
-No dashes:   "000032019324000081"   ← Used in URL path
-```
+**Why base64 image embedding?**
+SEC servers return 403 Forbidden when headless browsers (Playwright) try to load images. By downloading images through our HTTP client (which has the correct User-Agent) and embedding them inline as data URLs, the HTML becomes self-contained and renders correctly in Playwright.
 
-**Why embed images as base64:**
-- SEC blocks image requests from headless browsers (anti-scraping)
-- Playwright rendering would show broken images
-- Embedding base64 makes the HTML self-contained and renders correctly
-
-**Fallback Strategy (if primary document fails):**
-1. Fetch `{accessionNumber}-index.html` (filing index page)
-2. Parse HTML to find links to the main 10-K document
-3. Download the discovered document instead
+**Fallback strategy:**
+If the `primaryDocument` download fails, we fetch the filing index page (`{accession}-index.html`), parse it to find the main 10-K document link, and download that instead.
 
 ---
 
-#### Step 6: Convert to PDF (`pdf.py`)
+### Step 6: Convert to PDF (`pdf.py`)
 
 ```
-Local HTML file: output/html/AAPL_2024-11-01_000032019324000081.htm
+Playwright loads file:///path/to/output/html/AAPL_2024-11-01_000032019324000081.htm
      ↓
-Playwright loads file:///path/to/file.htm
+page.pdf() generates PDF with scale=0.9, Letter format
      ↓
-page.pdf() generates PDF
-     ↓
-Atomic write: temp file → rename to final path
+Atomic write: temp file → rename to output/pdf/AAPL_2024-11-01_10-K.pdf
 ```
 
-**Why Playwright over alternatives:**
+**Why Playwright?**
 
 | Approach | Pros | Cons |
 |----------|------|------|
-| **Playwright (chosen)** | Full browser rendering, handles CSS/JS, most accurate | Requires Chromium install (~300MB) |
-| WeasyPrint | Pure Python, no browser needed | Limited CSS support, struggles with complex layouts |
-| wkhtmltopdf | Fast, good CSS support | Requires system install, deprecated |
-| pdfkit | Wrapper around wkhtmltopdf | Same limitations |
+| **Playwright** (chosen) | Full Chromium rendering, handles CSS/JS, most accurate | Requires Chromium install (~300MB) |
+| WeasyPrint | Pure Python, no browser | Limited CSS support, breaks on complex layouts |
+| wkhtmltopdf | Fast, decent CSS | Deprecated, requires system install |
 
-**Why atomic writes:**
-```python
-# Write to temp file first, then rename
-temp_path = pdf_path.with_suffix(".tmp")
-page.pdf(path=str(temp_path), ...)
-temp_path.rename(pdf_path)  # Atomic on same filesystem
-```
-- If the process crashes mid-write, we don't have a corrupt partial PDF
-- The final file either exists completely or doesn't exist at all
+**Why atomic writes?**
+Write to `.tmp` first, then rename. If the process crashes mid-write, we get a temp file instead of a corrupt PDF. The final file either exists completely or not at all.
 
 ---
 
-#### Step 7: Summary & Exit (`pipeline.py`)
+### Step 7: Summary & Exit (`pipeline.py`)
 
 ```
 ================================================================================
@@ -184,152 +129,84 @@ SUMMARY
 Company         Ticker   CIK          Filing Date  Status   PDF/Error
 --------------------------------------------------------------------------------
 Apple           AAPL     320193       2024-11-01   OK       output/pdf/AAPL_2024-11-01_10-K.pdf
-Meta            META     1326801      2024-02-02   OK       output/pdf/META_2024-02-02_10-K.pdf
+Meta            META     1326801      2024-02-02   FAILED   HTTP 500: Server error
 --------------------------------------------------------------------------------
-Total: 2 | OK: 2 | FAILED: 0
+Total: 2 | OK: 1 | FAILED: 1
 ================================================================================
 ```
 
-**Exit codes:**
-- `0`: At least one PDF succeeded
-- `1`: All companies failed
-
-**Why this exit code strategy:**
-- Common Unix convention: 0 = success, non-zero = failure
-- Partial success (some PDFs generated) is still useful, so exit 0
-- Allows scripting: `python -m src.main && echo "At least one worked"`
+- Exit code `0` if at least one PDF succeeded, `1` if all failed.
+- Per-company isolation: one failure never stops the pipeline.
 
 ---
 
-### Key Design Decisions Summary
+## Extending to Other Filing Types
 
-| Decision | Choice | Why | Alternatives Rejected |
-|----------|--------|-----|----------------------|
-| HTTP library | `requests` | Simple, well-known, sufficient | `httpx` (async not needed), `aiohttp` (overkill) |
-| Retry library | `tenacity` | Flexible, decorators, well-maintained | Manual retry loops (error-prone), `backoff` (less features) |
-| PDF conversion | Playwright | Accurate rendering of complex HTML | WeasyPrint (poor CSS), wkhtmltopdf (deprecated) |
-| CLI parser | `argparse` | Built-in, sufficient | `click` (extra dependency), `typer` (overkill) |
-| Data models | `dataclasses` | Built-in, simple | `pydantic` (heavier, validation not critical here) |
-| Parallelism | Sequential | SEC rate limits make parallel inefficient | `asyncio` (adds complexity, minimal benefit) |
+The current code hardcodes `"10-K"`. Supporting other form types (10-Q, 8-K, DEF 14A, etc.) requires **minimal changes**:
 
----
+### Changes Required
 
-## Key Implementation Details
+| Where | What |
+|-------|------|
+| `cli.py` | Add `--form` argument (default `"10-K"`) |
+| `filings.py` | Rename `fetch_latest_10k_meta()` → `fetch_latest_filing_meta(form_type)`, filter by parameter |
+| `pipeline.py` | Pass `form_type` through to filings + file naming |
+| File naming | Use `form_type` in `safe_filename()` instead of hardcoded `"10-K"` |
 
-### SEC API Compliance (Critical!)
+### What Stays Unchanged
 
-**User-Agent Header (Required by SEC):**
-```python
-# settings.py
-USER_AGENT = os.getenv(
-    "SEC_USER_AGENT",
-    "Amirul Islam (amirulislamalmamun@gmail.com)"
-)
+| Module | Why |
+|--------|-----|
+| `sec_http.py` | Generic HTTP client — no knowledge of filing types |
+| `cik.py` | CIK resolution is independent of form type |
+| `download.py` | Downloads any document URL regardless of form type |
+| `pdf.py` | Converts any HTML to PDF |
+| `utils.py` | Pure utilities, no filing type awareness |
 
-# sec_http.py - Applied to ALL requests
-self._session.headers.update({"User-Agent": self.user_agent})
-```
-
-Why this matters:
-- SEC will block requests without proper User-Agent
-- Must include contact email per SEC fair access policy
-- Environment variable allows override without code changes
-
-**Rate Limiting:**
-```python
-# Default: 2 requests per second
-def simple_rate_limiter(max_per_second: float):
-    min_interval = 1.0 / max_per_second
-    last_call = [0.0]
-    
-    def limiter():
-        elapsed = time.time() - last_call[0]
-        if elapsed < min_interval:
-            time.sleep(min_interval - elapsed)
-        last_call[0] = time.time()
-    
-    return limiter
-```
-
-Why a simple limiter vs token bucket:
-- For sequential processing, a simple sleep-based limiter is sufficient
-- Token bucket would be useful for burst handling in async scenarios
-- Keeps code simple and predictable
-
-**Retry Strategy:**
-```python
-@retry(
-    stop=stop_after_attempt(4),  # 1 initial + 3 retries
-    wait=wait_exponential(multiplier=1, min=1, max=30),
-    retry=retry_if_exception_type((RetryableHttpError, ConnectionError, Timeout)),
-    reraise=True,
-)
-```
-
-What gets retried:
-- HTTP 429 (Too Many Requests)
-- HTTP 5xx (Server Errors)
-- Connection errors
-- Timeouts
-
-What doesn't get retried:
-- HTTP 4xx (except 429) - Client errors indicate a bug, not transient failure
-- JSON parse errors - Data issue, not network issue
-
-**Retry-After Header:**
-```python
-if response.status_code == 429:
-    retry_after = response.headers.get("Retry-After")
-    if retry_after:
-        time.sleep(float(retry_after))
-```
+This demonstrates that the architecture separates concerns well — filing-type logic is isolated to the orchestration and metadata layers.
 
 ---
 
-## Demo Checklist
+## Quick Reference
 
-- [ ] Clean run: `python -m src.main` generates PDFs for all 6 companies
-- [ ] Custom companies: `python -m src.main --companies "TSLA,MSFT"`
-- [ ] Show output directories: `ls output/pdf/ output/html/ output/json/`
-- [ ] Open a generated PDF and HTML to show they match
-- [ ] Show the summary table output
-- [ ] Run tests: `pytest -v`
-- [ ] Run linter: `ruff check .`
-- [ ] Explain the logs as they appear
-- [ ] Show error handling: try an invalid ticker to demonstrate graceful failure
-
----
-
-## Quick Reference Card
-
-### Key URLs
+### SEC URLs
 
 ```
-Ticker → CIK mapping:  https://www.sec.gov/files/company_tickers.json
-Submissions:           https://data.sec.gov/submissions/CIK{cik10}.json
-Archives:              https://www.sec.gov/Archives/edgar/data/{cik_int}/{accession_no_dashes}/{document}
-Filing index:          https://www.sec.gov/Archives/edgar/data/{cik_int}/{accession_no_dashes}/{accession}-index.html
+Ticker → CIK:   https://www.sec.gov/files/company_tickers.json
+Submissions:     https://data.sec.gov/submissions/CIK{cik10}.json
+Archives:        https://www.sec.gov/Archives/edgar/data/{cik_int}/{accession_no_dashes}/{document}
+Filing index:    https://www.sec.gov/Archives/edgar/data/{cik_int}/{accession_no_dashes}/{accession}-index.html
 ```
 
 ### CIK Formats
 
 ```
-cik10 = "0000320193"  → Used in: CIK0000320193.json (submissions)
-cik_int = 320193      → Used in: /edgar/data/320193/ (archives)
+cik10   = "0000320193"  → submissions endpoint
+cik_int = 320193        → archives path
 ```
 
 ### Accession Number
 
 ```
 Original:   "0000320193-24-000081"
-No dashes:  "000032019324000081"  → Used in archive paths
+No dashes:  "000032019324000081"    → used in archive URL paths
 ```
 
 ### Exit Codes
 
 ```
-0 = At least one PDF succeeded
-1 = All companies failed
+0 = at least one PDF succeeded
+1 = all companies failed
 ```
 
-END
+---
+
+## Demo Checklist
+
+- [ ] Clean run: `python -m src.main` — generates PDFs for all 6 default companies
+- [ ] Custom input: `python -m src.main --companies "TSLA,MSFT,BRK-B"`
+- [ ] Inspect output: `ls output/pdf/ output/html/ output/json/`
+- [ ] Open a PDF and its source HTML side by side
+- [ ] Run tests: `pytest -v`
+- [ ] Run linter: `ruff check .`
+- [ ] Error handling: try an invalid ticker to show graceful failure

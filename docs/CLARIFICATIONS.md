@@ -37,5 +37,3 @@
 - Per-company failure isolation (one failure must not stop others).
 - Final summary printed to stdout (OK/FAILED per company + paths + error).
 - Deterministic file naming; atomic PDF writes (temp -> rename).
-
-END

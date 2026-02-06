@@ -1,4 +1,8 @@
-# SEC EDGAR 10-K FILINGS - Key Considerations
+# SEC EDGAR 10-K Filings — Correctness & Compliance Checklist
+
+A concise reference of things that **must not** go wrong. For architecture details see [ARCHITECTURE.md](ARCHITECTURE.md); for step-by-step flow see [FLOW_EXPLANATION.md](FLOW_EXPLANATION.md).
+
+---
 
 ## 1) Primary correctness risks (do not mess these up)
 - CIK formatting:
@@ -100,5 +104,3 @@ from src.core.settings import (
 - Confirm final summary clearly shows each company status.
 - Confirm README is runnable and accurate.
 - Follow best coding and programming practices.
-
-END
