@@ -106,11 +106,11 @@ Worker C ──┘
 |----------|-------------|------|------|
 | **Redis sliding window** (recommended) | `INCR` key with TTL; check count before request | Simple, battle-tested | Slight race conditions under extreme load |
 | Token bucket in Redis | `EVALSHA` Lua script to atomically consume tokens | Precise, handles bursts | More complex Lua scripting |
-| Dedicated proxy | nginx/Envoy with rate limiting sits between workers and SEC | Language-agnostic, centralized | Extra infrastructure component |
 
-**Recommendation 1: Redis sliding window for simplicity.** Lua-based token bucket if precision matters.
+**Recommendations:** 
 
-**Recommendation 2: 8 req/s instead of 10.** Leave headroom. SEC's limit isn't well-documented; 8 req/s provides safety margin and avoids 429s.
+- Redis sliding window for simplicity. Lua-based token bucket if precision matters.
+- 8 req/s instead of 10. Leave headroom. SEC's limit isn't well-documented; 8 req/s provides safety margin and avoids 429s.
 
 ---
 
@@ -219,23 +219,6 @@ Most of the pipeline is **form-type agnostic**. The only parts that care about f
 3. **(Optional) Document selection** — 8-K filings may have multiple exhibits worth downloading
 
 Everything else (HTTP client, CIK resolution, download, image embedding, PDF conversion) is generic.
-
-### 4.3 Filing-Specific Edge Cases
-
-**8-K (Current Events):**
-- Multiple primary documents per filing (press releases, exhibits)
-- Decision: Download only `primaryDocument`, or all exhibits?
-- Recommendation: Configurable — default to primary only, `--include-exhibits` flag for full download
-
-**S-1 (IPO Registration):**
-- Very large documents (100+ pages)
-- May have amendments (S-1/A)
-- Playwright may need higher timeout and more memory
-
-**20-F (Foreign Filers):**
-- Same structure as 10-K but different form code
-- May have non-English content
-- PDF rendering should handle Unicode correctly (Playwright does)
 
 ---
 
@@ -364,23 +347,6 @@ Playwright/Chromium is the bottleneck. Optimizations:
 3. **Resource limits** — Set memory limits per Chromium process to prevent OOM
 4. **Timeout enforcement** — Kill conversions that exceed threshold (e.g., 60s)
 
-```python
-# Browser pool concept
-class BrowserPool:
-    def __init__(self, size: int = 4):
-        self.pool = asyncio.Queue(maxsize=size)
-        # Pre-launch browsers
-        for _ in range(size):
-            browser = await playwright.chromium.launch()
-            await self.pool.put(browser)
-
-    async def acquire(self) -> Browser:
-        return await self.pool.get()
-
-    async def release(self, browser: Browser):
-        await self.pool.put(browser)
-```
-
 ### 8.4 Throughput Estimates
 
 | Bottleneck | Capacity | Notes |
@@ -456,12 +422,7 @@ spec:
         image: sec-filings-service:latest
         command: ["celery", "-A", "worker", "--queues=pdf"]
         resources:
-          requests:
-            memory: "512Mi"
-            cpu: "500m"
-          limits:
-            memory: "1Gi"
-            cpu: "1000m"
+          ...
 ```
 
 ### 10.3 Environment Progression
