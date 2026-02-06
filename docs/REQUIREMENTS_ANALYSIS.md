@@ -219,8 +219,6 @@ NICE TO PROVIDE:
 
 ---
 
----
-
 ## 10) Definition of Done
 - Running the program produces up to 6 PDFs in output/pdf for the six companies.
 - The final console summary clearly shows success/failure per company.
